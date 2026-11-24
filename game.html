@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Breakout — built by an AI agent in one prompt</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #07070f; overflow: hidden; }
+  body { font-family: "Courier New", ui-monospace, monospace; color: #e8f6ff; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #hud { width: 960px; max-width: 96vw; display: flex; justify-content: space-between; align-items: baseline; padding: 10px 4px; font-size: 22px; letter-spacing: 2px; }
+  #hud .title { color: #ff2ea6; font-weight: bold; text-shadow: 0 0 12px #ff2ea6; }
+  #hud .score { color: #2ee6ff; text-shadow: 0 0 12px #2ee6ff; }
+  #hud .lives { color: #ffe14d; text-shadow: 0 0 12px #ffe14d; }
+  canvas { background: #0a0a18; border: 2px solid #2ee6ff; border-radius: 8px; box-shadow: 0 0 32px rgba(46, 230, 255, 0.35), inset 0 0 40px rgba(46, 230, 255, 0.08); cursor: none; }
+  #hint { margin-top: 12px; font-size: 18px; color: #8fa8c0; letter-spacing: 2px; }
+  #hint b { color: #2ee6ff; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <span class="title">NEON BREAKOUT</span>
+    <span class="score">SCORE <span id="score">0</span></span>
+    <span class="lives">LIVES <span id="lives">3</span></span>
+  </div>
+  <canvas id="game" width="960" height="600"></canvas>
+  <div id="hint">move your <b>mouse</b> to catch the ball &mdash; clear every brick</div>
+</div>
+<script>
+(function () {
+  "use strict";
+  var canvas = document.getElementById("game");
+  var ctx = canvas.getContext("2d");
+  var W = canvas.width, H = canvas.height;
+  var scoreEl = document.getElementById("score");
+  var livesEl = document.getElementById("lives");
+  var hintEl = document.getElementById("hint");
+
+  var ROWS = 5, COLS = 10;
+  var BRICK_W = 86, BRICK_H = 26, BRICK_GAP = 8, BRICK_TOP = 56;
+  var ROW_COLORS = ["#ff2ea6", "#ff7a1a", "#ffe14d", "#39ff6a", "#2ee6ff"];
+  var PADDLE_W = 120, PADDLE_H = 14, PADDLE_Y = H - 44;
+  var BALL_R = 9;
+
+  var auto = new URLSearchParams(location.search).get("auto") === "1";
+  var paddle = { x: W / 2 - PADDLE_W / 2 };
+  var ball, bricks, score, lives, state, raf;
+
+  function buildBricks() {
+    bricks = [];
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        bricks.push({
+          x: 10 + c * (BRICK_W + BRICK_GAP),
+          y: BRICK_TOP + r * (BRICK_H + BRICK_GAP),
+          w: BRICK_W, h: BRICK_H,
+          color: ROW_COLORS[r], alive: true
+        });
+      }
+    }
+  }
+
+  function resetBall() {
+    ball = { x: W / 2, y: H - 90, dx: 4.2, dy: -4.6 };
+  }
+
+  function resetGame() {
+    buildBricks();
+    score = 0; lives = 3; state = "ready";
+    resetBall();
+    scoreEl.textContent = "0";
+    livesEl.textContent = "3";
+    hintEl.innerHTML = "move your <b>mouse</b> to catch the ball &mdash; clear every brick";
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    // bricks
+    for (var i = 0; i < bricks.length; i++) {
+      var b = bricks[i];
+      if (!b.alive) continue;
+      ctx.fillStyle = b.color;
+      ctx.shadowColor = b.color;
+      ctx.shadowBlur = 14;
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
+    ctx.shadowBlur = 0;
+    // paddle
+    ctx.fillStyle = "#2ee6ff";
+    ctx.shadowColor = "#2ee6ff";
+    ctx.shadowBlur = 18;
+    ctx.fillRect(paddle.x, PADDLE_Y, PADDLE_W, PADDLE_H);
+    ctx.shadowBlur = 0;
+    // ball
+    ctx.fillStyle = "#ffffff";
+    ctx.shadowColor = "#ff2ea6";
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // overlays
+    if (state === "ready") {
+      overlay("CLICK TO START", "#2ee6ff");
+    } else if (state === "won") {
+      overlay("YOU WIN!  SCORE " + score, "#39ff6a");
+    } else if (state === "over") {
+      overlay("GAME OVER  —  SCORE " + score, "#ff2ea6");
+    }
+  }
+
+  function overlay(text, color) {
+    ctx.fillStyle = "rgba(7,7,15,0.55)";
+    ctx.fillRect(0, H / 2 - 52, W, 104);
+    ctx.fillStyle = color;
+    ctx.font = "bold 44px 'Courier New', monospace";
+    ctx.textAlign = "center";
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 22;
+    ctx.fillText(text, W / 2, H / 2 + 16);
+    ctx.shadowBlur = 0;
+  }
+
+  function step() {
+    if (state === "play") {
+      if (auto) {
+        // demo driver: paddle chases the ball so the recording plays itself
+        var target = ball.x - PADDLE_W / 2;
+        paddle.x += (target - paddle.x) * 0.35;
+      }
+      ball.x += ball.dx;
+      ball.y += ball.dy;
+      if (ball.x < BALL_R) { ball.x = BALL_R; ball.dx = Math.abs(ball.dx); }
+      if (ball.x > W - BALL_R) { ball.x = W - BALL_R; ball.dx = -Math.abs(ball.dx); }
+      if (ball.y < BALL_R) { ball.y = BALL_R; ball.dy = Math.abs(ball.dy); }
+      // paddle hit
+      if (ball.dy > 0 && ball.y + BALL_R >= PADDLE_Y && ball.y + BALL_R <= PADDLE_Y + PADDLE_H + 8 &&
+          ball.x >= paddle.x - BALL_R && ball.x <= paddle.x + PADDLE_W + BALL_R) {
+        var rel = (ball.x - (paddle.x + PADDLE_W / 2)) / (PADDLE_W / 2);
+        var speed = Math.min(8.5, Math.hypot(ball.dx, ball.dy) * 1.02);
+        var angle = rel * (Math.PI / 3);
+        ball.dx = speed * Math.sin(angle);
+        ball.dy = -Math.abs(speed * Math.cos(angle));
+        ball.y = PADDLE_Y - BALL_R;
+      }
+      // brick hits
+      for (var i = 0; i < bricks.length; i++) {
+        var b = bricks[i];
+        if (!b.alive) continue;
+        if (ball.x + BALL_R > b.x && ball.x - BALL_R < b.x + b.w &&
+            ball.y + BALL_R > b.y && ball.y - BALL_R < b.y + b.h) {
+          b.alive = false;
+          score += 10;
+          scoreEl.textContent = String(score);
+          ball.dy = -ball.dy;
+          break;
+        }
+      }
+      // fell past the paddle
+      if (ball.y - BALL_R > H) {
+        lives -= 1;
+        livesEl.textContent = String(lives);
+        if (lives <= 0) {
+          state = "over";
+          hintEl.textContent = "click to play again";
+        } else {
+          resetBall();
+          state = "ready";
+        }
+      }
+      // cleared every brick
+      var left = 0;
+      for (var j = 0; j < bricks.length; j++) if (bricks[j].alive) left++;
+      if (left === 0) {
+        state = "won";
+        hintEl.textContent = "you cleared the board — click to play again";
+      }
+    }
+    draw();
+    raf = requestAnimationFrame(step);
+  }
+
+  canvas.addEventListener("mousemove", function (e) {
+    var rect = canvas.getBoundingClientRect();
+    var mx = (e.clientX - rect.left) * (W / rect.width);
+    paddle.x = Math.max(0, Math.min(W - PADDLE_W, mx - PADDLE_W / 2));
+  });
+  canvas.addEventListener("click", function () {
+    if (state === "ready") { state = "play"; hintEl.textContent = "keep the ball alive"; }
+    else if (state === "won" || state === "over") { resetGame(); state = "play"; }
+  });
+
+  resetGame();
+  if (auto) { state = "play"; hintEl.textContent = "demo mode — the agent plays itself"; }
+  step();
+})();
+</script>
+</body>
+</html>
